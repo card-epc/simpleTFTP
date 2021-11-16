@@ -2,8 +2,11 @@
 #include <WinSock2.h>
 #include <cstdio>
 #include <string>
+#include <vector>
+#include <map>
 #include <time.h>
 #include <iostream>
+#include <algorithm>
 #include <Windows.h>
 
 using namespace std;
@@ -11,7 +14,7 @@ using namespace std;
 string  fileName = "FLEX.pdf";
 string  dstIP    = "192.168.152.128";
 int     dstPort  = 69;
-int     TimeOut  = 100;
+int     TimeOut  = 500;
 int     maxTout  = 5;
 string  mode     = BIN;
 string  writeRQ;
@@ -29,8 +32,13 @@ int slen = sizeof(server);
 int from_len = sizeof(from);
 DWORD written;
 DWORD read;
-clock_t tstart, tend;
+clock_t tstart, tend, tmid;
 double  tt;  
+
+inline void archive() {
+    fclose(msgfp);
+    msgfp = fopen("Msg.log", "a+");
+} 
 
 int init_RQ(int RQsign)
 {
@@ -65,77 +73,113 @@ inline void logTime() {
 
 int wrapped_recvfrom(char* data, int rcsize, int sdsize, int opcode, int num) 
 {
+    char *oldData = new char[sdsize+3];
+    memcpy(oldData, data, sdsize);
     while (1) {
         int len = recvfrom(socket1, data, rcsize, 0, (struct sockaddr*)&from, &from_len);
+        // cout << "No Packet..."  << " " << recvfrom(socket1, data, rcsize, 0, (struct sockaddr*)&from, &from_len) << endl;
         if(len == SOCKET_ERROR) {
-            sendto(socket1, data, sdsize, 0, (struct sockaddr*)&from, from_len);
+            sendto(socket1, oldData, sdsize, 0, (struct sockaddr*)&from, from_len);
             retranblk++;
-            Sleep(TimeOut);
-        }
-        else if(data[1] == TERROR) {
+            continue;
+            // Sleep(TimeOut);
+        } else if(data[1] == TERROR) {
             logTime();
             fprintf(msgfp, "Error: ");
             fprintf(msgfp, data+4);
             fprintf(msgfp, "\n");
+            archive();
             return 0;
-        }
-        else if(opcode == data[1]) {
-            int datanum = (Data[3]&0xff) + ((Data[2]&0xff)<<8);
+        } else if (opcode == data[1]) {
+
+            int datanum = (data[3]&0xff) + ((data[2]&0xff)<<8);
+            // cout << "ACK Blk " << datanum << endl;
             if(num == datanum) {
+                // cout << "Get " << num << endl;
                 return len;
             } else {
+                // cout << "OldData " << (int)oldData[0] << (int)oldData[1] << endl;
+                // cout << "OldData " << (int)oldData[2] << (int)oldData[3] << endl;
                 retranblk++;
-                sendto(socket1, data, sdsize, 0, (struct sockaddr*)&from, from_len);
+                sendto(socket1, oldData, sdsize, 0, (struct sockaddr*)&from, from_len);
+                continue;
             }
         }
+        sendto(socket1, oldData, sdsize, 0, (struct sockaddr*)&from, from_len);
+        retranblk++;
+        Sleep(TimeOut);
     }
+    free(oldData);
 }
 
 void UpLoad()
 {
-
     init_Server();
     int num = 1;
-    printf("Client Create SOCKET。\n");
-    char sendData[1024];
-    memset(sendData, 0, sizeof(sendData));
+    // printf("Client Create SOCKET.\n");
+    // char sendData[1024];
+    memset(Data, 0, sizeof(Data));
     
-    sendData[1] = DATA;
-    init_RQ(WRQ);
+    Data[1] = DATA;
+    int ssize = init_RQ(WRQ);
+    printf("Start Upload.\n");       
 
-    if (sendto(socket1, writeRQ.c_str(), writeRQ.size(), 0, (struct sockaddr*)&server, slen) != SOCKET_ERROR) {  
-        printf("Send a request, wait for the server to accept and send data...\n");  
-    }
+    sendto(socket1, Data, ssize, 0, (struct sockaddr*)&server, slen);
 
     HANDLE hFile = CreateFileA(fileName.c_str(), GENERIC_READ, FILE_SHARE_DELETE|FILE_SHARE_WRITE|FILE_SHARE_READ, NULL, OPEN_EXISTING, NULL, NULL);
-    int fileSize = GetFileSize(hFile, nullptr);
-    while (true) {
-        int len = recvfrom(socket1, sendData, sizeof(sendData), 0, (struct sockaddr*)&from, &from_len);
-        if(sendData[1] == ACK && len == 4)
-            break;
+    if(hFile == INVALID_HANDLE_VALUE) {
+        logTime();
+        fprintf(msgfp, "ReadFile failed.\n");
+        archive();
     }
-    int len = fileSize;
-    while ( len >= 0 ) {
-        int rlen = len > PACKET ? PACKET : len;
+    tsize = GetFileSize(hFile, NULL);
 
-        memset(sendData, 0, sizeof(sendData));
-        sendData[1] = DATA;
-        sendData[2] = (num >> 8) & 0xff;
-        sendData[3] = num & 0xff;
-        ReadFile(hFile, sendData+4, rlen, &read, NULL);
+    int x = wrapped_recvfrom(Data, sizeof(Data), ssize, ACK, 0);
+    // int len = wrapped_recvfrom(socket1, Data, sizeof(Data), 0, (struct sockaddr*)&from, &from_len);
+    if (x == 0) {
+        return;
+    }
+    // ProgressBar pb(tsize);
+    tstart = clock();
+    int len = tsize;
+    while ( len >= 0 ) {
+
+        int rlen = len > PACKET ? PACKET : len;
+        memset(Data, 0, sizeof(Data));
+        Data[1] = DATA;
+        Data[2] = (num >> 8) & 0xff;
+        Data[3] = num & 0xff;
+        ReadFile(hFile, Data+4, rlen, &read, NULL);
         
 
-        sendto(socket1, sendData, rlen+4, 0, (struct sockaddr*)&from, from_len);
-        while (true) {
-            recvfrom(socket1, sendData, sizeof(sendData), 0, (struct sockaddr*)&from, &from_len);
-            int acknum = (sendData[3]&0xff) + ((sendData[2]&0xff)<<8);
-            if(sendData[1] == ACK && acknum == num) {
-                break;
-            }
+        sendto(socket1, Data, rlen+4, 0, (struct sockaddr*)&from, from_len);
+        rsize += rlen;
+        // cout << "send " << num << endl;
+        if (wrapped_recvfrom(Data, sizeof(Data), rlen+4, ACK, num) == 0) {
+            return;
         }
+        tend = clock();
+        tt = (double)(tend-tmid)/CLOCKS_PER_SEC;
+        if(tt > 0.1) {
+            tmid = tend;
+            printRate(rsize, tsize, tt);
+        }
+
         num++;
         len-=PACKET;
     }  
+    tend = clock();
+    printRate(rsize, tsize, tt);
+    tt = (double)(tend-tstart)/CLOCKS_PER_SEC;
+    cout << endl << "Throughput: " << tsize/tt << endl;
+    logTime();
+    fprintf(msgfp, fileName.c_str());
+    fprintf(msgfp, " upload succeed!\n");
+    string retran = "Resend" + to_string(retranblk) + "blks. Total size: " + to_string(tsize) + "bits\n";
+    fprintf(msgfp, retran.c_str());
+    archive();
+    cout << "Finished.\n" << retran;
+    retranblk = rsize = tsize = 0;
 }
 
 void DownLoad()
@@ -144,16 +188,13 @@ void DownLoad()
     memset(Data, 0, sizeof(Data));
     
     init_Server();
-    printf("Start Creating SOCKET.\n");       
+    printf("Start Download.\n");       
     int ssize = init_RQ(RRQ);
 
     // request for tsize
-    if (sendto(socket1, Data, ssize, 0, (struct sockaddr*)&server, slen) != SOCKET_ERROR) {  
-        printf("Send a request, wait for the client to accept and send data...\n");
-    }
+    sendto(socket1, Data, ssize, 0, (struct sockaddr*)&server, slen);
 
     HANDLE hFile = CreateFileA(fileName.c_str(), GENERIC_READ|GENERIC_WRITE, FILE_SHARE_DELETE|FILE_SHARE_WRITE|FILE_SHARE_READ, NULL, CREATE_ALWAYS, NULL, NULL);
-    // tstart = clock();
     while(1) {
 
         int ret = recvfrom(socket1, Data, sizeof(Data), 0, (struct sockaddr*)&from, &from_len);
@@ -175,38 +216,210 @@ void DownLoad()
     }
 
     // initProgressBar();
-
+    tstart = clock();
     while(true)  
     {   
         // int datalen = recvfrom(socket1, Data, sizeof(Data), 0, (struct sockaddr*)&from, &from_len);
         int datalen = wrapped_recvfrom(Data, sizeof(Data), 4, DATA, num);
         // & -> (automatically convert to unsigned int)
+        if(!datalen)    return;
         int datanum = (Data[3]&0xff) + ((Data[2]&0xff)<<8);
         rsize += (datalen-4);
         if(!WriteFile(hFile, Data+4, datalen-4, &written, NULL)) {
-                printf("WRITE ERROR\n");
+                logTime();
+                fprintf(msgfp, "WriteFile Error.\n");
+                archive();
                 break;
             }
         Data[1] = ACK;
         sendto(socket1, Data, 4, 0, (struct sockaddr*)&from, from_len);
+        tend = clock();
+        tt = (double)(tend-tmid)/CLOCKS_PER_SEC;
+        if(tt > 0.1) {
+            tmid = tend;
+            printRate(rsize, tsize, tt);
+        }
         num++;
         if(datalen < 516)   break;   
     }  
-    putchar('\n');
+    tend = clock();
+    printRate(rsize, tsize, tt);
+    tt = (double)(tend-tstart)/CLOCKS_PER_SEC;
+    cout << endl << "Throughput: " << tsize/tt << "bps" << endl;
+    logTime();
+    fprintf(msgfp, fileName.c_str());
+    fprintf(msgfp, " download succeed!\n");
+    string retran = "Resend " + to_string(retranblk) + " blks. Total size: " + to_string(tsize) + " bits\n";
+    fprintf(msgfp, retran.c_str());
+    archive();
+    cout << "Finished.\n" << retran;
+    retranblk = rsize = tsize = 0;
 }
+
+class InterfaceConf {
+    private:
+        string promt;
+        string param;
+        vector<string> cmlpart;
+        void (InterfaceConf::*funcptr[4])(const string&);
+        map<string, int> options;
+        map<string, int>::iterator iter;
+        void printhelp()
+        {
+            FILE *fp;
+            int  len;
+            char *data;
+            fp = fopen("help", "rb");
+            fseek(fp, 0, SEEK_END);
+            len = ftell(fp);
+            fseek(fp, 0, SEEK_SET);
+            data = (char*)malloc(len + 1);
+            data[len] = 0;
+            fread(data, 1, len, fp);
+            fclose(fp);
+            printf("%s\n", data);
+        }
+        void update() {
+            promt = "to " + dstIP + ":" + to_string(dstPort) + " > ";
+            // cout << promt << endl; 
+        }
+        void split(const string& str) {
+            cmlpart.clear();
+            string temp;
+            for(int i = 0; i<str.size(); i++) {
+                if(str[i] == ' ') {
+                    while(str[i] == ' ') i++;
+                }
+                else {
+                    int x = i;
+                    while(str[i] != ' ' && i<str.size()) i++;
+                    temp.assign(str.begin()+x, str.begin()+i);
+                    cmlpart.push_back(temp);
+                }
+            }
+        }
+    public:
+        InterfaceConf() {
+            options.emplace("q", 0);
+            options.emplace("h", 1);
+            options.emplace("help", 1);
+            options.emplace("quit", 0);
+            options.emplace("exit", 0);
+            options.emplace("set",  4);
+            options.emplace("mode", 5);
+            options.emplace("dhost",    6);
+            options.emplace("dport",    7);
+            options.emplace("timeout",  8);
+            options.emplace("upload",   2);
+            options.emplace("download", 3);
+            update();
+            funcptr[1] = &InterfaceConf::setdip;
+            funcptr[2] = &InterfaceConf::setdport;
+            funcptr[3] = &InterfaceConf::setTimeout;
+            funcptr[0] = &InterfaceConf::setTransmode;
+        }
+        void setTimeout(const string& str) {
+            for(char c : str) {
+                if(!isdigit(c)) {
+                    cout << "Syntax Error" << endl;
+                    return;
+                }
+            }
+            TimeOut = stoi(str);
+        }
+        void setdip(const string& str) {
+            dstIP = str;
+            update();
+        }        
+        void setdport(const string& str) {
+            for(char c : str) {
+                if(!isdigit(c)) {
+                    cout << "Syntax Error" << endl;
+                    return;
+                }
+            }
+            dstPort = stoi(str);
+            update();
+        }        
+        void setTransmode(const string& str) {
+            if(str == "bin" || str == "ascii")
+                mode = (str=="bin") ? BIN : ASCII;
+            else
+                cout << "Mode can't found" << endl;
+            return;
+        }    
+        void print() {
+            cout << promt;
+        }
+        int run(const string& str) {
+            split(str);
+            // for(string& s : cmlpart)
+            //     cout << s << " ";
+            if(cmlpart.empty()) {
+                return 1;
+            } else {
+
+                iter = options.find(cmlpart[0]);
+                if(iter == options.end() || iter->second > 4) {
+                    cout << "Syntax Error" << endl;
+                }
+                else if(iter->second < 2){
+                    if(iter->second == 1) {
+                        printhelp();
+                    } else {
+                        cout << "Bye" << endl;
+                        return 0;
+                    }
+                }
+                else if(iter->second == 2) {
+                    fileName = (cmlpart.size() > 1) ? cmlpart[1] : fileName;
+                    UpLoad();
+                } else if(iter->second == 3) {
+                    fileName = (cmlpart.size() > 1) ? cmlpart[1] : fileName;
+                    DownLoad();
+                }
+                else {
+                    iter = options.find(cmlpart[1]);
+                    if(iter == options.end()) {
+                        cout << "Syntax Error" << endl;
+                    } else if(cmlpart.size() != 3) {
+                        cout << "Param needed" << endl;
+                    } else {
+                        (this->*funcptr[iter->second-5])(cmlpart[2]);
+                    }
+                }
+                return 1;
+            }
+        }
+};
 
 int main()
 { 
     msgfp = fopen("Msg.log", "a+");
+    HideCursor();
+    // fprintf(msgfp, "ASADSSAD");
+    
     WSADATA wsaData;  
     if (WSAStartup(MAKEWORD(2, 1), &wsaData)) {  
-        printf("Winsock无法初始化!\n"); 
+        logTime();
+        fprintf(msgfp, "init failed\n");
+        archive();
         WSACleanup();  
         return 0;  
     }
     socket1 = socket(AF_INET, SOCK_DGRAM, 0); 
+    setsockopt(socket1, SOL_SOCKET, SO_RCVTIMEO, (char*)&TimeOut, sizeof(int));
     // UpLoad();
-    DownLoad();
+    // DownLoad();
+    // cout << retranblk << endl;
+    InterfaceConf ifc;
+    string comline;
+    do {
+        ifc.print();
+        getline(cin, comline);
+        // transform(comline.begin(), comline.end(), comline.begin(), ::tolower);
+    }while(ifc.run(comline));
+
     fclose(msgfp);
     closesocket(socket1);  
     WSACleanup(); 
