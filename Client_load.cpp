@@ -11,7 +11,7 @@ using namespace std;
 string  fileName = "FLEX.pdf";
 string  dstIP    = "192.168.152.128";
 int     dstPort  = 69;
-int     TimeOut  = 3000;
+int     TimeOut  = 100;
 int     maxTout  = 5;
 string  mode     = BIN;
 string  writeRQ;
@@ -21,7 +21,7 @@ SOCKET  socket1;
 char    errtm[30];
 SYSTEMTIME systm;
 FILE*   msgfp;
-char    data[1024];
+char    Data[1024];
 
 struct sockaddr_in server;
 struct sockaddr_in from;  
@@ -32,7 +32,7 @@ DWORD read;
 clock_t tstart, tend;
 double  tt;  
 
-void init_RQ(int RQsign)
+int init_RQ(int RQsign)
 {
     writeRQ.clear();
     writeRQ += ZEROCHAR;
@@ -47,6 +47,8 @@ void init_RQ(int RQsign)
         writeRQ += '0';
         writeRQ += ZEROCHAR;
     }
+    memcpy(Data, writeRQ.c_str(), writeRQ.size());
+    return writeRQ.size();
 }
 
 inline void init_Server() {
@@ -61,43 +63,31 @@ inline void logTime() {
     fprintf(msgfp, errtm);
 }
 
-int wrapped_recvfrom(char* data, int rcsize, int sdsize, int id, int sendid) 
+int wrapped_recvfrom(char* data, int rcsize, int sdsize, int opcode, int num) 
 {
-    int n = 0;
     while (1) {
         int len = recvfrom(socket1, data, rcsize, 0, (struct sockaddr*)&from, &from_len);
         if(len == SOCKET_ERROR) {
             sendto(socket1, data, sdsize, 0, (struct sockaddr*)&from, from_len);
             retranblk++;
-            Sleep(300);
+            Sleep(TimeOut);
         }
-        else if(id == data[1]) {
-            // logTime();
-            // fprintf(error, "Recv ")
-            if(id == 6) {
-                int idx = 0, a = 2;
-                for( ; a; idx++) {
-                    if(data[idx] == 0) a--;
-                }
-                tsize = atoi(data+idx);
-            }
-            return len;
-        }
-        else if(data[1] == 5) {
+        else if(data[1] == TERROR) {
             logTime();
             fprintf(msgfp, "Error: ");
             fprintf(msgfp, data+4);
             fprintf(msgfp, "\n");
             return 0;
-        }  
-        // if(n == maxTout){
-        //     logTime();
-        //     string s = "Receive timeout and retransmit";
-        //     s += n+'0';
-        //     s += " times\n";
-        //     fprintf(msgfp, s.c_str());
-        //     return 0;
-        // }
+        }
+        else if(opcode == data[1]) {
+            int datanum = (Data[3]&0xff) + ((Data[2]&0xff)<<8);
+            if(num == datanum) {
+                return len;
+            } else {
+                retranblk++;
+                sendto(socket1, data, sdsize, 0, (struct sockaddr*)&from, from_len);
+            }
+        }
     }
 }
 
@@ -151,39 +141,35 @@ void UpLoad()
 void DownLoad()
 {      
     int   num = 1;
-    char  recvData[1024];
-    memset(recvData, 0, sizeof(recvData));
+    memset(Data, 0, sizeof(Data));
     
     init_Server();
     printf("Start Creating SOCKET.\n");       
-    init_RQ(RRQ);
+    int ssize = init_RQ(RRQ);
 
     // request for tsize
-    memcpy(recvData, writeRQ.c_str(), writeRQ.size());
-    if (sendto(socket1, writeRQ.c_str(), writeRQ.size(), 0, (struct sockaddr*)&server, slen) != SOCKET_ERROR) {  
+    if (sendto(socket1, Data, ssize, 0, (struct sockaddr*)&server, slen) != SOCKET_ERROR) {  
         printf("Send a request, wait for the client to accept and send data...\n");
     }
 
     HANDLE hFile = CreateFileA(fileName.c_str(), GENERIC_READ|GENERIC_WRITE, FILE_SHARE_DELETE|FILE_SHARE_WRITE|FILE_SHARE_READ, NULL, CREATE_ALWAYS, NULL, NULL);
-    int outTime = 0;
     // tstart = clock();
     while(1) {
 
-        int ret = recvfrom(socket1, recvData, sizeof(recvData), 0, (struct sockaddr*)&from, &from_len);
-        if(recvData[1] == 6) {
+        int ret = recvfrom(socket1, Data, sizeof(Data), 0, (struct sockaddr*)&from, &from_len);
+        if(Data[1] == 6) {
             int idx = 0, a = 2;
             for( ; a; idx++) {
-                if(recvData[idx] == 0) a--;
+                if(Data[idx] == 0) a--;
             }
-            tsize = atoi(recvData+idx);
-            recvData[1] = ACK;
-            recvData[2] = recvData[3] = 0;
-            sendto(socket1, recvData, 4, 0, (struct sockaddr*)&from, from_len);
+            tsize = atoi(Data+idx);
+            Data[1] = ACK;
+            Data[2] = Data[3] = 0;
+            sendto(socket1, Data, 4, 0, (struct sockaddr*)&from, from_len);
             break;
         }
         if(ret == SOCKET_ERROR) {
-            sendto(socket1, writeRQ.c_str(), writeRQ.size(), 0, (struct sockaddr*)&server, slen);
-            outTime++;
+            sendto(socket1, Data, ssize, 0, (struct sockaddr*)&server, slen);
             Sleep(TimeOut);
         }
     }
@@ -192,23 +178,19 @@ void DownLoad()
 
     while(true)  
     {   
-        int datalen = recvfrom(socket1, recvData, sizeof(recvData), 0, (struct sockaddr*)&from, &from_len);
+        // int datalen = recvfrom(socket1, Data, sizeof(Data), 0, (struct sockaddr*)&from, &from_len);
+        int datalen = wrapped_recvfrom(Data, sizeof(Data), 4, DATA, num);
         // & -> (automatically convert to unsigned int)
-        int datanum = (recvData[3]&0xff) + ((recvData[2]&0xff)<<8);
+        int datanum = (Data[3]&0xff) + ((Data[2]&0xff)<<8);
         rsize += (datalen-4);
-        // tend = clock(); tt = (double)(tend-tstart)/CLOCKS_PER_SEC;
-        // ProgressBar(tt, rsize, tsize);
-        if( datalen != SOCKET_ERROR && recvData[1] == 3 && datanum == num)
-        {   
-            if(!WriteFile(hFile, recvData+4, datalen-4, &written, NULL)) {
+        if(!WriteFile(hFile, Data+4, datalen-4, &written, NULL)) {
                 printf("WRITE ERROR\n");
                 break;
             }
-            recvData[1] = ACK;
-            sendto(socket1, recvData, 4, 0, (struct sockaddr*)&from, from_len);
-            num++;
-            if(datalen < 516)   break;
-        }      
+        Data[1] = ACK;
+        sendto(socket1, Data, 4, 0, (struct sockaddr*)&from, from_len);
+        num++;
+        if(datalen < 516)   break;   
     }  
     putchar('\n');
 }
