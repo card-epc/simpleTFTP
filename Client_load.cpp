@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <math.h>
 #include <time.h>
 #include <iostream>
 #include <algorithm>
@@ -11,14 +12,10 @@
 
 using namespace std;
 
-string  fileName = "FLEX.pdf";
-string  dstIP    = "192.168.152.128";
-int     dstPort  = 69;
-int     TimeOut  = 500;
-int     maxTout  = 5;
-string  mode     = BIN;
+const double time_Interval = 0.1;
+
 string  writeRQ;
-int     tsize, rsize;
+size_t  tsize, rsize;
 int     retranblk;
 SOCKET  socket1;
 char    errtm[30];
@@ -33,12 +30,26 @@ int from_len = sizeof(from);
 DWORD written;
 DWORD read;
 clock_t tstart, tend, tmid;
-double  tt;  
+double  tt; 
 
 inline void archive() {
     fclose(msgfp);
     msgfp = fopen("Msg.log", "a+");
 } 
+
+inline string convertBase(int size) {
+    double ss;
+    char num[30];
+    if (size > 1000000) {
+        sprintf(num, "%.2lf", round(size/10000.0)/100.0);
+        return string(num)+"M";
+    } else if (size > 1000) {
+        sprintf(num, "%.2lf", round(size/10.0)/100.0);
+        return string(num)+"K";
+    } else {
+        return to_string(size);
+    }
+}
 
 int init_RQ(int RQsign)
 {
@@ -160,7 +171,7 @@ void UpLoad()
         }
         tend = clock();
         tt = (double)(tend-tmid)/CLOCKS_PER_SEC;
-        if(tt > 0.1) {
+        if(tt > time_Interval) {
             tmid = tend;
             printRate(rsize, tsize, tt);
         }
@@ -171,11 +182,11 @@ void UpLoad()
     tend = clock();
     printRate(rsize, tsize, tt);
     tt = (double)(tend-tstart)/CLOCKS_PER_SEC;
-    cout << endl << "Throughput: " << tsize/tt << endl;
+    cout << endl << "Throughput: " << convertBase(tsize/tt) << "bps" << endl;
     logTime();
     fprintf(msgfp, fileName.c_str());
     fprintf(msgfp, " upload succeed!\n");
-    string retran = "Resend" + to_string(retranblk) + "blks. Total size: " + to_string(tsize) + "bits\n";
+    string retran = "Resend " + to_string(retranblk) + " blks. Total size: " + convertBase(tsize) + " bits\n";
     fprintf(msgfp, retran.c_str());
     archive();
     cout << "Finished.\n" << retran;
@@ -235,7 +246,7 @@ void DownLoad()
         sendto(socket1, Data, 4, 0, (struct sockaddr*)&from, from_len);
         tend = clock();
         tt = (double)(tend-tmid)/CLOCKS_PER_SEC;
-        if(tt > 0.1) {
+        if(tt > time_Interval) {
             tmid = tend;
             printRate(rsize, tsize, tt);
         }
@@ -245,158 +256,20 @@ void DownLoad()
     tend = clock();
     printRate(rsize, tsize, tt);
     tt = (double)(tend-tstart)/CLOCKS_PER_SEC;
-    cout << endl << "Throughput: " << tsize/tt << "bps" << endl;
+    cout << endl << "Throughput: " << convertBase(tsize/tt) << "bps" << endl;
     logTime();
     fprintf(msgfp, fileName.c_str());
     fprintf(msgfp, " download succeed!\n");
-    string retran = "Resend " + to_string(retranblk) + " blks. Total size: " + to_string(tsize) + " bits\n";
+    string retran = "Resend " + to_string(retranblk) + " blks. Total size: " + convertBase(tsize) + " bits\n";
     fprintf(msgfp, retran.c_str());
     archive();
     cout << "Finished.\n" << retran;
     retranblk = rsize = tsize = 0;
 }
 
-class InterfaceConf {
-    private:
-        string promt;
-        string param;
-        vector<string> cmlpart;
-        void (InterfaceConf::*funcptr[4])(const string&);
-        map<string, int> options;
-        map<string, int>::iterator iter;
-        void printhelp()
-        {
-            FILE *fp;
-            int  len;
-            char *data;
-            fp = fopen("help", "rb");
-            fseek(fp, 0, SEEK_END);
-            len = ftell(fp);
-            fseek(fp, 0, SEEK_SET);
-            data = (char*)malloc(len + 1);
-            data[len] = 0;
-            fread(data, 1, len, fp);
-            fclose(fp);
-            printf("%s\n", data);
-        }
-        void update() {
-            promt = "to " + dstIP + ":" + to_string(dstPort) + " > ";
-            // cout << promt << endl; 
-        }
-        void split(const string& str) {
-            cmlpart.clear();
-            string temp;
-            for(int i = 0; i<str.size(); i++) {
-                if(str[i] == ' ') {
-                    while(str[i] == ' ') i++;
-                }
-                else {
-                    int x = i;
-                    while(str[i] != ' ' && i<str.size()) i++;
-                    temp.assign(str.begin()+x, str.begin()+i);
-                    cmlpart.push_back(temp);
-                }
-            }
-        }
-    public:
-        InterfaceConf() {
-            options.emplace("q", 0);
-            options.emplace("h", 1);
-            options.emplace("help", 1);
-            options.emplace("quit", 0);
-            options.emplace("exit", 0);
-            options.emplace("set",  4);
-            options.emplace("mode", 5);
-            options.emplace("dhost",    6);
-            options.emplace("dport",    7);
-            options.emplace("timeout",  8);
-            options.emplace("upload",   2);
-            options.emplace("download", 3);
-            update();
-            funcptr[1] = &InterfaceConf::setdip;
-            funcptr[2] = &InterfaceConf::setdport;
-            funcptr[3] = &InterfaceConf::setTimeout;
-            funcptr[0] = &InterfaceConf::setTransmode;
-        }
-        void setTimeout(const string& str) {
-            for(char c : str) {
-                if(!isdigit(c)) {
-                    cout << "Syntax Error" << endl;
-                    return;
-                }
-            }
-            TimeOut = stoi(str);
-        }
-        void setdip(const string& str) {
-            dstIP = str;
-            update();
-        }        
-        void setdport(const string& str) {
-            for(char c : str) {
-                if(!isdigit(c)) {
-                    cout << "Syntax Error" << endl;
-                    return;
-                }
-            }
-            dstPort = stoi(str);
-            update();
-        }        
-        void setTransmode(const string& str) {
-            if(str == "bin" || str == "ascii")
-                mode = (str=="bin") ? BIN : ASCII;
-            else
-                cout << "Mode can't found" << endl;
-            return;
-        }    
-        void print() {
-            cout << promt;
-        }
-        int run(const string& str) {
-            split(str);
-            // for(string& s : cmlpart)
-            //     cout << s << " ";
-            if(cmlpart.empty()) {
-                return 1;
-            } else {
-
-                iter = options.find(cmlpart[0]);
-                if(iter == options.end() || iter->second > 4) {
-                    cout << "Syntax Error" << endl;
-                }
-                else if(iter->second < 2){
-                    if(iter->second == 1) {
-                        printhelp();
-                    } else {
-                        cout << "Bye" << endl;
-                        return 0;
-                    }
-                }
-                else if(iter->second == 2) {
-                    fileName = (cmlpart.size() > 1) ? cmlpart[1] : fileName;
-                    UpLoad();
-                } else if(iter->second == 3) {
-                    fileName = (cmlpart.size() > 1) ? cmlpart[1] : fileName;
-                    DownLoad();
-                }
-                else {
-                    iter = options.find(cmlpart[1]);
-                    if(iter == options.end()) {
-                        cout << "Syntax Error" << endl;
-                    } else if(cmlpart.size() != 3) {
-                        cout << "Param needed" << endl;
-                    } else {
-                        (this->*funcptr[iter->second-5])(cmlpart[2]);
-                    }
-                }
-                return 1;
-            }
-        }
-};
-
 int main()
 { 
     msgfp = fopen("Msg.log", "a+");
-    HideCursor();
     // fprintf(msgfp, "ASADSSAD");
     
     WSADATA wsaData;  
@@ -416,7 +289,9 @@ int main()
     string comline;
     do {
         ifc.print();
+        RestoreCursor();
         getline(cin, comline);
+        HideCursor();
         // transform(comline.begin(), comline.end(), comline.begin(), ::tolower);
     }while(ifc.run(comline));
 
