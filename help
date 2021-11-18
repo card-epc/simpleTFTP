@@ -1,13 +1,15 @@
-                            default
-set------dhost(dspIP)   192.168.130.128
-    |----dport                69
-    |----timeout             1000
-    |----mode(bin/ascii)      bin
-
-upload   ----- filename     FLEX.pdf
-         |---- (null)       LASTFILE
-download ----- filename     FLEX.pdf
-
-quit/exit/q 
-
-help/h
+—————————————————————————+————————————————
+      OPTIONS            |    DEFAULT
+—————————————————————————+————————————————
+set------dhost(dstIP)    |   127.0.0.1
+    |----dport           |      69
+    |----timeout         |    1000(ms)
+    |----mode(bin/ascii) |   octet(bin)
+—————————————————————————+————————————————
+upload   ----- filename  |   FLEX.pdf
+         |---- (null)    |   LASTFILE
+download ----- filename  |   FLEX.pdf
+—————————————————————————+————————————————
+quit/exit/q              |      NULL
+—————————————————————————+————————————————
+help/h                   |      NULL

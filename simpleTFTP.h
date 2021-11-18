@@ -92,24 +92,9 @@ class InterfaceConf {
         void (InterfaceConf::*funcptr[4])(const string&);
         map<string, int> options;
         map<string, int>::iterator iter;
-        void printhelp()
-        {
-            FILE *fp;
-            int  len;
-            char *data;
-            fp = fopen("help", "rb");
-            fseek(fp, 0, SEEK_END);
-            len = ftell(fp);
-            fseek(fp, 0, SEEK_SET);
-            data = (char*)malloc(len + 1);
-            data[len] = 0;
-            fread(data, 1, len, fp);
-            fclose(fp);
-            printf("%s\n", data);
-        }
+        void printhelp();
         void update() {
             promt = "to " + dstIP + ":" + to_string(dstPort) + " > ";
-            // cout << promt << endl; 
         }
         void split(const string& str) {
             cmlpart.clear();
@@ -146,6 +131,8 @@ class InterfaceConf {
             funcptr[3] = &InterfaceConf::setTimeout;
             funcptr[0] = &InterfaceConf::setTransmode;
         }
+        void print() { cout << promt; }
+        int run(const string& str);
         void setTimeout(const string& str) {
             for(char c : str) {
                 if(!isdigit(c)) {
@@ -176,49 +163,65 @@ class InterfaceConf {
                 cout << "Mode can't found" << endl;
             return;
         }    
-        void print() {
-            cout << promt;
-        }
-        int run(const string& str) {
-            split(str);
-            // for(string& s : cmlpart)
-            //     cout << s << " ";
-            if(cmlpart.empty()) {
-                return 1;
-            } else {
 
-                iter = options.find(cmlpart[0]);
-                if(iter == options.end() || iter->second > 4) {
-                    cout << "Syntax Error" << endl;
-                }
-                else if(iter->second < 2){
-                    if(iter->second == 1) {
-                        printhelp();
-                    } else {
-                        cout << "Bye" << endl;
-                        return 0;
-                    }
-                }
-                else if(iter->second == 2) {
-                    fileName = (cmlpart.size() > 1) ? cmlpart[1] : fileName;
-                    UpLoad();
-                } else if(iter->second == 3) {
-                    fileName = (cmlpart.size() > 1) ? cmlpart[1] : fileName;
-                    DownLoad();
-                }
-                else {
-                    iter = options.find(cmlpart[1]);
-                    if(iter == options.end()) {
-                        cout << "Syntax Error" << endl;
-                    } else if(cmlpart.size() != 3) {
-                        cout << "Param needed" << endl;
-                    } else {
-                        (this->*funcptr[iter->second-5])(cmlpart[2]);
-                    }
-                }
-                return 1;
+};
+
+void InterfaceConf::printhelp()
+{
+    FILE *fp;
+    int  len;
+    char *data;
+    fp = fopen("help", "rb");
+    fseek(fp, 0, SEEK_END);
+    len = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    data = (char*)malloc(len + 1);
+    data[len] = 0;
+    fread(data, 1, len, fp);
+    fclose(fp);
+    printf("%s\n", data);
+}
+
+int InterfaceConf::run(const string& str)
+{
+    split(str);
+    // for(string& s : cmlpart)
+    //     cout << s << " ";
+    if(cmlpart.empty()) {
+        return 1;
+    } else {
+
+        iter = options.find(cmlpart[0]);
+        if(iter == options.end() || iter->second > 4) {
+            cout << "Syntax Error" << endl;
+        }
+        else if(iter->second < 2){
+            if(iter->second == 1) {
+                this->printhelp();
+            } else {
+                cout << "Bye" << endl;
+                return 0;
             }
         }
-};
+        else if(iter->second == 2) {
+            fileName = (cmlpart.size() > 1) ? cmlpart[1] : fileName;
+            UpLoad();
+        } else if(iter->second == 3) {
+            fileName = (cmlpart.size() > 1) ? cmlpart[1] : fileName;
+            DownLoad();
+        }
+        else {
+            iter = options.find(cmlpart[1]);
+            if(iter == options.end()) {
+                cout << "Syntax Error" << endl;
+            } else if(cmlpart.size() != 3) {
+                cout << "Param needed" << endl;
+            } else {
+                (this->*funcptr[iter->second-5])(cmlpart[2]);
+            }
+        }
+        return 1;
+    }
+}
 
 #endif
