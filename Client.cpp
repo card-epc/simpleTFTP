@@ -15,7 +15,7 @@ using namespace std;
 const double time_Interval = 0.1;
 
 string  writeRQ;
-size_t  tsize, rsize;
+size_t  tsize, rsize, prsize;
 int     retranblk;
 SOCKET  socket1;
 char    errtm[30];
@@ -86,12 +86,22 @@ int wrapped_recvfrom(char* data, int rcsize, int sdsize, int opcode, int num)
 {
     char *oldData = new char[sdsize+3];
     memcpy(oldData, data, sdsize);
+    clock_t x, y;
+    x = clock();
     while (1) {
         int len = recvfrom(socket1, data, rcsize, 0, (struct sockaddr*)&from, &from_len);
         // cout << "No Packet..."  << " " << recvfrom(socket1, data, rcsize, 0, (struct sockaddr*)&from, &from_len) << endl;
         if(len == SOCKET_ERROR) {
             sendto(socket1, oldData, sdsize, 0, (struct sockaddr*)&from, from_len);
             retranblk++;
+            // cout << "Sock_ERROR" << endl;
+            y = clock();
+            if ( (double)(y-x)/CLOCKS_PER_SEC > 5.0) {
+                logTime();
+                fprintf(msgfp, "Maybe unreachable port\n");
+                archive();
+                return 0;
+            }
             continue;
             // Sleep(TimeOut);
         } else if(data[1] == TERROR) {
@@ -111,6 +121,7 @@ int wrapped_recvfrom(char* data, int rcsize, int sdsize, int opcode, int num)
             } else {
                 // cout << "OldData " << (int)oldData[0] << (int)oldData[1] << endl;
                 // cout << "OldData " << (int)oldData[2] << (int)oldData[3] << endl;
+                // cout << num << " " << datanum << endl;
                 retranblk++;
                 sendto(socket1, oldData, sdsize, 0, (struct sockaddr*)&from, from_len);
                 continue;
@@ -127,8 +138,7 @@ void UpLoad()
 {
     init_Server();
     int num = 1;
-    // printf("Client Create SOCKET.\n");
-    // char sendData[1024];
+
     memset(Data, 0, sizeof(Data));
     
     Data[1] = DATA;
@@ -137,14 +147,22 @@ void UpLoad()
 
     sendto(socket1, Data, ssize, 0, (struct sockaddr*)&server, slen);
 
-    HANDLE hFile = CreateFileA(fileName.c_str(), GENERIC_READ, FILE_SHARE_DELETE|FILE_SHARE_WRITE|FILE_SHARE_READ, NULL, OPEN_EXISTING, NULL, NULL);
-    if(hFile == INVALID_HANDLE_VALUE) {
+    // HANDLE hFile = CreateFileA(fileName.c_str(), GENERIC_READ, FILE_SHARE_DELETE|FILE_SHARE_WRITE|FILE_SHARE_READ, NULL, OPEN_EXISTING, NULL, NULL);
+    FILE* fp = fopen(fileName.c_str(), "rb+");
+    // if(hFile == INVALID_HANDLE_VALUE) {
+    if(fp == INVALID_HANDLE_VALUE) {
         logTime();
         fprintf(msgfp, "ReadFile failed.\n");
         archive();
     }
-    tsize = GetFileSize(hFile, NULL);
-
+    
+    // tsize = GetFileSize(hFile, NULL);
+    
+    fseek(fp, 0, SEEK_END);
+    tsize = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    // cout << tsize << endl;
+    // system("pause");
     int x = wrapped_recvfrom(Data, sizeof(Data), ssize, ACK, 0);
     // int len = wrapped_recvfrom(socket1, Data, sizeof(Data), 0, (struct sockaddr*)&from, &from_len);
     if (x == 0) {
@@ -160,7 +178,8 @@ void UpLoad()
         Data[1] = DATA;
         Data[2] = (num >> 8) & 0xff;
         Data[3] = num & 0xff;
-        ReadFile(hFile, Data+4, rlen, &read, NULL);
+        // ReadFile(hFile, Data+4, rlen, &read, NULL);
+        fread(Data+4, 1, rlen, fp);
         
 
         sendto(socket1, Data, rlen+4, 0, (struct sockaddr*)&from, from_len);
@@ -172,25 +191,26 @@ void UpLoad()
         tend = clock();
         tt = (double)(tend-tmid)/CLOCKS_PER_SEC;
         if(tt > time_Interval) {
+            printRate(rsize, tsize, tt, (rsize-prsize)/tt);
             tmid = tend;
-            printRate(rsize, tsize, tt);
+            prsize = rsize;
         }
-
-        num++;
+        num = (num+1)%65536;
         len-=PACKET;
     }  
     tend = clock();
-    printRate(rsize, tsize, tt);
+    printRate(rsize, tsize, tt, 0);
     tt = (double)(tend-tstart)/CLOCKS_PER_SEC;
-    cout << endl << "Throughput: " << convertBase(tsize/tt) << "bps" << endl;
+    cout << endl << "Throughput: " << convertBase(tsize*8/tt) << "bps" << endl;
     logTime();
     fprintf(msgfp, fileName.c_str());
     fprintf(msgfp, " upload succeed!\n");
-    string retran = "Resend " + to_string(retranblk) + " blks. Total size: " + convertBase(tsize) + " bits\n";
+    string retran = "Resend " + to_string(retranblk) + " blks. Total size: " + byteConvert(tsize) + "\n";
     fprintf(msgfp, retran.c_str());
     archive();
     cout << "Finished.\n" << retran;
-    retranblk = rsize = tsize = 0;
+    fclose(fp);
+    retranblk = rsize = tsize = prsize = 0;
 }
 
 void DownLoad()
@@ -205,26 +225,20 @@ void DownLoad()
     // request for tsize
     sendto(socket1, Data, ssize, 0, (struct sockaddr*)&server, slen);
 
-    HANDLE hFile = CreateFileA(fileName.c_str(), GENERIC_READ|GENERIC_WRITE, FILE_SHARE_DELETE|FILE_SHARE_WRITE|FILE_SHARE_READ, NULL, CREATE_ALWAYS, NULL, NULL);
-    while(1) {
+    // HANDLE hFile = CreateFileA(fileName.c_str(), GENERIC_READ|GENERIC_WRITE, FILE_SHARE_DELETE|FILE_SHARE_WRITE|FILE_SHARE_READ, NULL, CREATE_ALWAYS, NULL, NULL);
+    FILE* fp = fopen(fileName.c_str(), "wb+");
 
-        int ret = recvfrom(socket1, Data, sizeof(Data), 0, (struct sockaddr*)&from, &from_len);
-        if(Data[1] == 6) {
-            int idx = 0, a = 2;
-            for( ; a; idx++) {
-                if(Data[idx] == 0) a--;
-            }
-            tsize = atoi(Data+idx);
-            Data[1] = ACK;
-            Data[2] = Data[3] = 0;
-            sendto(socket1, Data, 4, 0, (struct sockaddr*)&from, from_len);
-            break;
-        }
-        if(ret == SOCKET_ERROR) {
-            sendto(socket1, Data, ssize, 0, (struct sockaddr*)&server, slen);
-            Sleep(TimeOut);
-        }
+    // int ret = recvfrom(socket1, Data, sizeof(Data), 0, (struct sockaddr*)&from, &from_len);
+    int ret = wrapped_recvfrom(Data, sizeof(Data), ssize, 6, 0x7473);
+    if(!ret)    return;
+    int idx = 0, a = 2;
+    for( ; a; idx++) {
+        if(Data[idx] == 0) a--;
     }
+    tsize = atoi(Data+idx);
+    Data[1] = ACK;
+    Data[2] = Data[3] = 0;
+    sendto(socket1, Data, 4, 0, (struct sockaddr*)&from, from_len);
 
     // initProgressBar();
     tstart = clock();
@@ -236,27 +250,29 @@ void DownLoad()
         if(!datalen)    return;
         int datanum = (Data[3]&0xff) + ((Data[2]&0xff)<<8);
         rsize += (datalen-4);
-        if(!WriteFile(hFile, Data+4, datalen-4, &written, NULL)) {
+        // if(!WriteFile(hFile, Data+4, datalen-4, &written, NULL)) {
+        if( fwrite(Data+4, 1, datalen-4, fp) != (datalen-4) ) {
                 logTime();
                 fprintf(msgfp, "WriteFile Error.\n");
                 archive();
                 break;
-            }
+        }
         Data[1] = ACK;
         sendto(socket1, Data, 4, 0, (struct sockaddr*)&from, from_len);
         tend = clock();
         tt = (double)(tend-tmid)/CLOCKS_PER_SEC;
         if(tt > time_Interval) {
+            printRate(rsize, tsize, tt, (rsize-prsize)/tt);
+            prsize = rsize;
             tmid = tend;
-            printRate(rsize, tsize, tt);
         }
-        num++;
+        num = (num+1)%65536;
         if(datalen < 516)   break;   
     }  
     tend = clock();
-    printRate(rsize, tsize, tt);
+    printRate(rsize, tsize, tt, 0);
     tt = (double)(tend-tstart)/CLOCKS_PER_SEC;
-    cout << endl << "Throughput: " << convertBase(tsize/tt) << "bps" << endl;
+    cout << endl << "Throughput: " << convertBase(tsize*8/tt) << "bps" << endl;
     logTime();
     fprintf(msgfp, fileName.c_str());
     fprintf(msgfp, " download succeed!\n");
@@ -264,13 +280,13 @@ void DownLoad()
     fprintf(msgfp, retran.c_str());
     archive();
     cout << "Finished.\n" << retran;
-    retranblk = rsize = tsize = 0;
+    fclose(fp);
+    retranblk = rsize = tsize = prsize = 0;
 }
 
 int main()
 { 
     msgfp = fopen("Msg.log", "a+");
-    // fprintf(msgfp, "ASADSSAD");
     
     WSADATA wsaData;  
     if (WSAStartup(MAKEWORD(2, 1), &wsaData)) {  
