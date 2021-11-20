@@ -154,6 +154,7 @@ void UpLoad()
         logTime();
         fprintf(msgfp, "ReadFile failed.\n");
         archive();
+        return;
     }
     
     // tsize = GetFileSize(hFile, NULL);
