@@ -150,7 +150,7 @@ void UpLoad()
     // HANDLE hFile = CreateFileA(fileName.c_str(), GENERIC_READ, FILE_SHARE_DELETE|FILE_SHARE_WRITE|FILE_SHARE_READ, NULL, OPEN_EXISTING, NULL, NULL);
     FILE* fp = fopen(fileName.c_str(), "rb+");
     // if(hFile == INVALID_HANDLE_VALUE) {
-    if(fp == INVALID_HANDLE_VALUE) {
+    if(fp == nullptr) {
         logTime();
         fprintf(msgfp, "ReadFile failed.\n");
         archive();
