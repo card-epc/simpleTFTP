@@ -17,7 +17,7 @@
 #define ASCII       "netascii"
 #define BIN         "octet"
 #define PACKET      512
-#define Square      "â–ˆ"
+#define Square      "¨€"
 #define ZEROCHAR    char(0)
 
 using namespace std;
