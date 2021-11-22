@@ -109,6 +109,7 @@ int wrapped_recvfrom(char* data, int rcsize, int sdsize, int opcode, int num, bo
         if(len != -1)
             return len;
         else {
+            logTime();
             fprintf(msgfp, "Request Rrror\n");
             archive();
             return 0;
