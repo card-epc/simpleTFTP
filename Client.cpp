@@ -199,6 +199,7 @@ void UpLoad()
     int x = wrapped_recvfrom(Data, sizeof(Data), ssize, ACK, 0, 1);
     // int len = wrapped_recvfrom(socket1, Data, sizeof(Data), 0, (struct sockaddr*)&from, &from_len);
     if (x == 0) {
+        retranblk = 0;
         return;
     }
     // ProgressBar pb(tsize);
@@ -276,12 +277,11 @@ void DownLoad()
 
     // initProgressBar();
     tstart = clock();
-    while(true)  
-    {   
+    while(true) {   
         // int datalen = recvfrom(socket1, Data, sizeof(Data), 0, (struct sockaddr*)&from, &from_len);
         int datalen = wrapped_recvfrom(Data, sizeof(Data), 4, DATA, num, 0);
         // & -> (automatically convert to unsigned int)
-        if(!datalen)    return;
+        if(!datalen)    { retranblk = 0; return; }
         int datanum = (Data[3]&0xff) + ((Data[2]&0xff)<<8);
         rsize += (datalen-4);
         // cout << "rsize: " << rsize << endl;
