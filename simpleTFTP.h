@@ -24,7 +24,7 @@ using namespace std;
 
 
 string  fileName = "test.png";
-string  dstIP    = "127.0.0.1";
+string  dstIP    = "192.168.152.128";
 int     dstPort  = 69;
 int     TimeOut  = 500;
 int     maxTout  = 5;

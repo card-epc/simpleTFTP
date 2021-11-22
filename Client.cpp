@@ -82,10 +82,38 @@ inline void logTime() {
     fprintf(msgfp, errtm);
 }
 
-int wrapped_recvfrom(char* data, int rcsize, int sdsize, int opcode, int num) 
+void recv_flush()
+{
+    char data[1024];
+    struct sockaddr_in temp;
+    while(1) {
+        int x = recvfrom(socket1, data, sizeof(data), 0, (struct sockaddr*)&temp, &from_len);
+        if(x == -1)
+            break;
+    }
+}
+
+int wrapped_recvfrom(char* data, int rcsize, int sdsize, int opcode, int num, bool ff) 
 {
     char *oldData = new char[sdsize+3];
+    // struct sockaddr_in temp = (ff == 1) ? server : from;
     memcpy(oldData, data, sdsize);
+    if(ff == 1)
+    {
+        int len;
+        for(int i = 1; i<10; i++) {
+            len = recvfrom(socket1, data, rcsize, 0, (struct sockaddr*)&from, &from_len);
+            if(len != -1)
+                break;
+        }
+        if(len != -1)
+            return len;
+        else {
+            fprintf(msgfp, "Request Rrror\n");
+            archive();
+            return 0;
+        }
+    }
     clock_t x, y;
     x = clock();
     while (1) {
@@ -96,9 +124,11 @@ int wrapped_recvfrom(char* data, int rcsize, int sdsize, int opcode, int num)
             retranblk++;
             // cout << "Sock_ERROR" << endl;
             y = clock();
-            if ( (double)(y-x)/CLOCKS_PER_SEC > 5.0) {
+            Sleep(500);
+            if ( (double)(y-x)/CLOCKS_PER_SEC > 20.0) {
                 logTime();
                 fprintf(msgfp, "Maybe unreachable port\n");
+                printf("\nthere is something wrong.\n");
                 archive();
                 return 0;
             }
@@ -117,6 +147,8 @@ int wrapped_recvfrom(char* data, int rcsize, int sdsize, int opcode, int num)
             // cout << "ACK Blk " << datanum << endl;
             if(num == datanum) {
                 // cout << "Get " << num << endl;
+                // int len = recvfrom(socket1, data, rcsize, 0, (struct sockaddr*)&from, &from_len);
+
                 return len;
             } else {
                 // cout << "OldData " << (int)oldData[0] << (int)oldData[1] << endl;
@@ -164,7 +196,7 @@ void UpLoad()
     fseek(fp, 0, SEEK_SET);
     // cout << tsize << endl;
     // system("pause");
-    int x = wrapped_recvfrom(Data, sizeof(Data), ssize, ACK, 0);
+    int x = wrapped_recvfrom(Data, sizeof(Data), ssize, ACK, 0, 1);
     // int len = wrapped_recvfrom(socket1, Data, sizeof(Data), 0, (struct sockaddr*)&from, &from_len);
     if (x == 0) {
         return;
@@ -186,7 +218,7 @@ void UpLoad()
         sendto(socket1, Data, rlen+4, 0, (struct sockaddr*)&from, from_len);
         rsize += rlen;
         // cout << "send " << num << endl;
-        if (wrapped_recvfrom(Data, sizeof(Data), rlen+4, ACK, num) == 0) {
+        if (wrapped_recvfrom(Data, sizeof(Data), rlen+4, ACK, num, 0) == 0) {
             return;
         }
         tend = clock();
@@ -200,7 +232,7 @@ void UpLoad()
         len-=PACKET;
     }  
     tend = clock();
-    printRate(rsize, tsize, tt, 0);
+    printRate(tsize, tsize, tt, 0);
     tt = (double)(tend-tstart)/CLOCKS_PER_SEC;
     cout << endl << "Throughput: " << convertBase(tsize*8/tt) << "bps" << endl;
     logTime();
@@ -212,6 +244,7 @@ void UpLoad()
     cout << "Finished.\n" << retran;
     fclose(fp);
     retranblk = rsize = tsize = prsize = 0;
+    recv_flush();
 }
 
 void DownLoad()
@@ -230,7 +263,7 @@ void DownLoad()
     FILE* fp = fopen(fileName.c_str(), "wb+");
 
     // int ret = recvfrom(socket1, Data, sizeof(Data), 0, (struct sockaddr*)&from, &from_len);
-    int ret = wrapped_recvfrom(Data, sizeof(Data), ssize, 6, 0x7473);
+    int ret = wrapped_recvfrom(Data, sizeof(Data), ssize, 6, 0x7473, 1);
     if(!ret)    return;
     int idx = 0, a = 2;
     for( ; a; idx++) {
@@ -246,11 +279,12 @@ void DownLoad()
     while(true)  
     {   
         // int datalen = recvfrom(socket1, Data, sizeof(Data), 0, (struct sockaddr*)&from, &from_len);
-        int datalen = wrapped_recvfrom(Data, sizeof(Data), 4, DATA, num);
+        int datalen = wrapped_recvfrom(Data, sizeof(Data), 4, DATA, num, 0);
         // & -> (automatically convert to unsigned int)
         if(!datalen)    return;
         int datanum = (Data[3]&0xff) + ((Data[2]&0xff)<<8);
         rsize += (datalen-4);
+        // cout << "rsize: " << rsize << endl;
         // if(!WriteFile(hFile, Data+4, datalen-4, &written, NULL)) {
         if( fwrite(Data+4, 1, datalen-4, fp) != (datalen-4) ) {
                 logTime();
@@ -271,17 +305,18 @@ void DownLoad()
         if(datalen < 516)   break;   
     }  
     tend = clock();
-    printRate(rsize, tsize, tt, 0);
+    printRate(tsize, tsize, tt, 0);
     tt = (double)(tend-tstart)/CLOCKS_PER_SEC;
     cout << endl << "Throughput: " << convertBase(tsize*8/tt) << "bps" << endl;
     logTime();
     fprintf(msgfp, fileName.c_str());
     fprintf(msgfp, " download succeed!\n");
-    string retran = "Resend " + to_string(retranblk) + " blks. Total size: " + convertBase(tsize) + " bits\n";
+    string retran = "Resend " + to_string(retranblk) + " blks. Total size: " + byteConvert(tsize) + "\n";
     fprintf(msgfp, retran.c_str());
     archive();
     cout << "Finished.\n" << retran;
     fclose(fp);
+    recv_flush();
     retranblk = rsize = tsize = prsize = 0;
 }
 
