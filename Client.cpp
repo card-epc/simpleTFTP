@@ -101,9 +101,9 @@ int wrapped_recvfrom(char* data, int rcsize, int sdsize, int opcode, int num, bo
     if(ff == 1)
     {
         int len;
-        for(int i = 1; i<10; i++) {
+        for(int i = 1; i < 10; i++) {
             len = recvfrom(socket1, data, rcsize, 0, (struct sockaddr*)&from, &from_len);
-            if(len != -1)
+            if(len != -1 && opcode == data[1])
                 break;
         }
         if(len != -1)
@@ -169,14 +169,16 @@ int wrapped_recvfrom(char* data, int rcsize, int sdsize, int opcode, int num, bo
 
 void UpLoad()
 {
+
     init_Server();
     int num = 1;
 
     memset(Data, 0, sizeof(Data));
-    
     Data[1] = DATA;
     int ssize = init_RQ(WRQ);
-    printf("Start Upload.\n");       
+    printf("Start Upload.\n");  
+
+    recv_flush();
 
     sendto(socket1, Data, ssize, 0, (struct sockaddr*)&server, slen);
 
@@ -246,7 +248,7 @@ void UpLoad()
     cout << "Finished.\n" << retran;
     fclose(fp);
     retranblk = rsize = tsize = prsize = 0;
-    recv_flush();
+
 }
 
 void DownLoad()
@@ -255,7 +257,10 @@ void DownLoad()
     memset(Data, 0, sizeof(Data));
     
     init_Server();
-    printf("Start Download.\n");       
+    printf("Start Download.\n");
+
+    recv_flush();
+
     int ssize = init_RQ(RRQ);
 
     // request for tsize
@@ -317,7 +322,6 @@ void DownLoad()
     archive();
     cout << "Finished.\n" << retran;
     fclose(fp);
-    recv_flush();
     retranblk = rsize = tsize = prsize = 0;
 }
 
